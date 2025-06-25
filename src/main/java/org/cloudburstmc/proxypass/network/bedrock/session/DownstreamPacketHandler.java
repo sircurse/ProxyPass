@@ -26,6 +26,7 @@ import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry;
 import org.cloudburstmc.proxypass.ProxyPass;
 import org.cloudburstmc.proxypass.network.bedrock.util.NbtBlockDefinitionRegistry;
 import org.cloudburstmc.proxypass.network.bedrock.util.RecipeUtils;
+import org.cloudburstmc.protocol.bedrock.data.BlockChangeEntry;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -320,4 +321,24 @@ public class DownstreamPacketHandler implements BedrockPacketHandler {
         private final int version;
         private final boolean componentBased;
     }
+
+@Override
+public PacketSignal handle(UpdateBlockPacket packet) {
+    for (BlockChangeEntry entry : packet.getBlockChanges()) {
+        var pos = entry.getPosition();
+        var def = entry.getDefinition(); // or getBlock(), depending on your version
+
+        log.info("UpdateBlock at {},{},{} with runtimeId {} and flags 0x{}",
+            pos.getX(), pos.getY(), pos.getZ(),
+            def.getRuntimeId(), Integer.toHexString(entry.getUpdateFlags())
+        );
+    }
+    return PacketSignal.UNHANDLED;
+}
+
+
+
+
+
+
 }
