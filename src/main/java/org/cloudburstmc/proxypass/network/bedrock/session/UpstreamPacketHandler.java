@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
+import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
+import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
 import org.cloudburstmc.protocol.bedrock.packet.*;
 import org.cloudburstmc.protocol.bedrock.util.ChainValidationResult;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
@@ -73,7 +75,7 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
     @Override
     public PacketSignal handle(LoginPacket packet) {
         try {
-            ChainValidationResult chain = EncryptionUtils.validateChain(packet.getChain());
+            ChainValidationResult chain = EncryptionUtils.validatePayload(packet.getAuthPayload());
 
             JsonNode payload = ProxyPass.JSON_MAPPER.valueToTree(chain.rawIdentityClaims());
 
@@ -91,13 +93,16 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
             }
             ECPublicKey identityPublicKey = EncryptionUtils.parseKey(payload.get("identityPublicKey").textValue());
 
-            String clientJwt = packet.getExtra();
+            String clientJwt = packet.getClientJwt();
             verifyJwt(clientJwt, identityPublicKey);
             JsonWebSignature jws = new JsonWebSignature();
             jws.setCompactSerialization(clientJwt);
 
             skinData = new JSONObject(JsonUtil.parseJson(jws.getUnverifiedPayload()));
-            chainData = packet.getChain();
+
+            if(packet.getAuthPayload() instanceof CertificateChainPayload pl)
+                chainData = pl.getChain();
+
             initializeProxySession();
         } catch (Exception e) {
             session.disconnect("disconnectionScreen.internalError.cantConnect");
@@ -136,8 +141,8 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
             chainData.add(authData);
 
             LoginPacket login = new LoginPacket();
-            login.getChain().addAll(chainData);
-            login.setExtra(skinData);
+            login.setAuthPayload(new CertificateChainPayload(chainData, AuthType.SELF_SIGNED));
+            login.setClientJwt(skinData);
             login.setProtocolVersion(ProxyPass.PROTOCOL_VERSION);
 
             downstream.setPacketHandler(new DownstreamInitialPacketHandler(downstream, proxySession, this.proxy, login));

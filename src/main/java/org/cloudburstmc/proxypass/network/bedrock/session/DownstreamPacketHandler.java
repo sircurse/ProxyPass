@@ -39,9 +39,20 @@ public class DownstreamPacketHandler implements BedrockPacketHandler {
     private final ProxyPlayerSession player;
     private final ProxyPass proxy;
 
+    private final List<NbtMap> entityProperties = new ArrayList<>();
+
     @Override
     public PacketSignal handle(AvailableEntityIdentifiersPacket packet) {
         proxy.saveNBT("entity_identifiers", packet.getIdentifiers());
+        return PacketSignal.UNHANDLED;
+    }
+
+    @Override
+    public PacketSignal handle(SyncEntityPropertyPacket packet) {
+        entityProperties.add(packet.getData());
+        NbtMapBuilder root = NbtMap.builder();
+        entityProperties.forEach(map -> root.put(map.getString("type"), map));
+        proxy.saveCompressedNBT("entity_properties", root.build());
         return PacketSignal.UNHANDLED;
     }
 
@@ -145,8 +156,7 @@ public class DownstreamPacketHandler implements BedrockPacketHandler {
         NbtMapBuilder root = NbtMap.builder();
         for (var item : packet.getItems()) {
             root.putCompound(item.getIdentifier(), item.getComponentData());
-            itemData.add(new DataEntry(item.getIdentifier(), item.getRuntimeId(), item.getVersion().ordinal(), item.isComponentBased()));
-        }
+            itemData.add(new DataEntry(item.getIdentifier(), item.getRuntimeId(), item.getVersion().ordinal(), item.isComponentBased()));        }
 
         if (ProxyPass.CODEC.getProtocolVersion() >= 776) {
             SimpleDefinitionRegistry.Builder<ItemDefinition> builder = SimpleDefinitionRegistry.<ItemDefinition>builder()
