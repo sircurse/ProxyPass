@@ -27,6 +27,8 @@ import org.cloudburstmc.proxypass.ProxyPass;
 import org.cloudburstmc.proxypass.network.bedrock.util.NbtBlockDefinitionRegistry;
 import org.cloudburstmc.proxypass.network.bedrock.util.RecipeUtils;
 import org.cloudburstmc.protocol.bedrock.data.BlockChangeEntry;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -324,17 +326,30 @@ public class DownstreamPacketHandler implements BedrockPacketHandler {
 
 @Override
 public PacketSignal handle(UpdateBlockPacket packet) {
-    for (BlockChangeEntry entry : packet.getBlockChanges()) {
-        var pos = entry.getPosition();
-        var def = entry.getDefinition(); // or getBlock(), depending on your version
+    try {
+        var codec = this.session.getPeer().getCodec();
+        var helper = this.session.getPeer().getCodecHelper();
+        ByteBuf buffer = Unpooled.buffer(); // Use Netty's default allocator
 
-        log.info("UpdateBlock at {},{},{} with runtimeId {} and flags 0x{}",
-            pos.getX(), pos.getY(), pos.getZ(),
-            def.getRuntimeId(), Integer.toHexString(entry.getUpdateFlags())
-        );
+        codec.tryEncode(helper, buffer, packet);
+
+        byte[] bytes = new byte[buffer.readableBytes()];
+        buffer.readBytes(bytes);
+        buffer.release(); // Release Netty buffer
+
+        StringBuilder hex = new StringBuilder();
+        for (byte b : bytes) {
+            hex.append(String.format("%02x ", b));
+        }
+
+        log.info("Raw UpdateBlockPacket HEX: {}", hex.toString().trim());
+    } catch (Exception e) {
+        log.error("Failed to encode UpdateBlockPacket", e);
     }
+
     return PacketSignal.UNHANDLED;
 }
+
 
 
 
