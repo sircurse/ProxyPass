@@ -40,7 +40,6 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
         JsonWebSignature jws = new JsonWebSignature();
         jws.setKey(key);
         jws.setCompactSerialization(jwt);
-
         return jws.verifySignature();
     }
 
@@ -73,31 +72,38 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
     @Override
     public PacketSignal handle(LoginPacket packet) {
         try {
-            ChainValidationResult chain = EncryptionUtils.validateChain(packet.getChain());
+            // Manually extract raw JWT chain from the clientJwt JSON
+            this.chainData = extractChainJwt(packet.getClientJwt());
 
+            // Validate the chain to extract identity
+            ChainValidationResult chain = EncryptionUtils.validateChain(this.chainData);
             JsonNode payload = ProxyPass.JSON_MAPPER.valueToTree(chain.rawIdentityClaims());
 
             if (payload.get("extraData").getNodeType() != JsonNodeType.OBJECT) {
                 throw new RuntimeException("AuthData was not found!");
             }
 
-            extraData = new JSONObject(JsonUtils.childAsType(chain.rawIdentityClaims(), "extraData", Map.class));
+            this.extraData = new JSONObject(JsonUtils.childAsType(chain.rawIdentityClaims(), "extraData", Map.class));
 
-            this.authData = new AuthData(chain.identityClaims().extraData.displayName,
-                    chain.identityClaims().extraData.identity, chain.identityClaims().extraData.xuid);
+            this.authData = new AuthData(
+                chain.identityClaims().extraData.displayName,
+                chain.identityClaims().extraData.identity,
+                chain.identityClaims().extraData.xuid
+            );
 
             if (payload.get("identityPublicKey").getNodeType() != JsonNodeType.STRING) {
                 throw new RuntimeException("Identity Public Key was not found!");
             }
+
             ECPublicKey identityPublicKey = EncryptionUtils.parseKey(payload.get("identityPublicKey").textValue());
 
-            String clientJwt = packet.getExtra();
+            String clientJwt = packet.getClientJwt();
             verifyJwt(clientJwt, identityPublicKey);
+
             JsonWebSignature jws = new JsonWebSignature();
             jws.setCompactSerialization(clientJwt);
+            this.skinData = new JSONObject(JsonUtil.parseJson(jws.getUnverifiedPayload()));
 
-            skinData = new JSONObject(JsonUtil.parseJson(jws.getUnverifiedPayload()));
-            chainData = packet.getChain();
             initializeProxySession();
         } catch (Exception e) {
             session.disconnect("disconnectionScreen.internalError.cantConnect");
@@ -108,6 +114,7 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
 
     private void initializeProxySession() {
         log.debug("Initializing proxy session");
+
         this.proxy.newClient(this.proxy.getTargetAddress(), downstream -> {
             downstream.setCodec(ProxyPass.CODEC);
             downstream.setSendSession(this.session);
@@ -130,15 +137,23 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
             } catch (Exception e) {
                 log.error("JSON output error: " + e.getMessage(), e);
             }
+
             String authData = ForgeryUtils.forgeAuthData(proxySession.getProxyKeyPair(), extraData);
             String skinData = ForgeryUtils.forgeSkinData(proxySession.getProxyKeyPair(), this.skinData);
             chainData.remove(chainData.size() - 1);
             chainData.add(authData);
 
+            // Forge the clientJwt to include chain JSON in raw format
+            String forgedChainJson;
+            try {
+                forgedChainJson = ProxyPass.JSON_MAPPER.writeValueAsString(chainData);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to write forged chain as JSON", e);
+            }
+
             LoginPacket login = new LoginPacket();
-            login.getChain().addAll(chainData);
-            login.setExtra(skinData);
             login.setProtocolVersion(ProxyPass.PROTOCOL_VERSION);
+            login.setClientJwt("{\"chain\":" + forgedChainJson + "}");
 
             downstream.setPacketHandler(new DownstreamInitialPacketHandler(downstream, proxySession, this.proxy, login));
             downstream.setLogging(true);
@@ -146,16 +161,32 @@ public class UpstreamPacketHandler implements BedrockPacketHandler {
             RequestNetworkSettingsPacket packet = new RequestNetworkSettingsPacket();
             packet.setProtocolVersion(ProxyPass.PROTOCOL_VERSION);
             downstream.sendPacketImmediately(packet);
-
-            //SkinUtils.saveSkin(proxySession, this.skinData);
         });
     }
 
     @Override
     public void onDisconnect(String reason) {
-        // Disconnect from the bedrock server when the client disconnects
         if (this.session.getSendSession().isConnected()) {
             this.session.getSendSession().disconnect(reason);
+        }
+    }
+
+    /**
+     * Extracts the raw JWT chain from the clientJwt string that wraps it in a JSON object.
+     */
+    private List<String> extractChainJwt(String clientJwtJson) {
+        try {
+            JsonNode root = ProxyPass.JSON_MAPPER.readTree(clientJwtJson);
+            JsonNode chainNode = root.get("chain");
+            if (chainNode == null || !chainNode.isArray()) {
+                throw new IllegalArgumentException("Missing or malformed 'chain' field in clientJwt");
+            }
+            return ProxyPass.JSON_MAPPER.convertValue(
+                chainNode,
+                ProxyPass.JSON_MAPPER.getTypeFactory().constructCollectionType(List.class, String.class)
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to extract chain JWT array from clientJwt JSON", e);
         }
     }
 }
