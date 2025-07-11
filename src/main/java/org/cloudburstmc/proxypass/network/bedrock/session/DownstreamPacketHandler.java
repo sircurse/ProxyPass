@@ -38,10 +38,20 @@ public class DownstreamPacketHandler implements BedrockPacketHandler {
     private final BedrockSession session;
     private final ProxyPlayerSession player;
     private final ProxyPass proxy;
+    private final List<NbtMap> entityProperties = new ArrayList<>();
 
     @Override
     public PacketSignal handle(AvailableEntityIdentifiersPacket packet) {
         proxy.saveNBT("entity_identifiers", packet.getIdentifiers());
+        return PacketSignal.UNHANDLED;
+    }
+
+    @Override
+    public PacketSignal handle(SyncEntityPropertyPacket packet) {
+        entityProperties.add(packet.getData());
+        NbtMapBuilder root = NbtMap.builder();
+        entityProperties.forEach(map -> root.put(map.getString("type"), map));
+        proxy.saveCompressedNBT("entity_properties", root.build());
         return PacketSignal.UNHANDLED;
     }
 
