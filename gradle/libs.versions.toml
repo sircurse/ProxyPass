@@ -1,5 +1,5 @@
 [versions]
-protocol = "3.0.0.Beta11-SNAPSHOT"
+protocol = "3.0.0.Beta10-SNAPSHOT"
 jackson = "2.17.2"
 
 [libraries]
